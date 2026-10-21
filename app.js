@@ -1,9 +1,10 @@
 'use strict';
 /* ================= Хранилище ================= */
 const LS = 'zal_v2';
-const DEFAULT_START = '2026-10-26';
+const DEFAULT_START = '2026-10-22';
 const blank = () => ({v:2,start:DEFAULT_START,bw:80,surgeonOk:false,log:{},morning:{},tests:{},rsi:{},bodyw:[],variant:{},notes:''});
 let st = (() => { try { return Object.assign(blank(), JSON.parse(localStorage.getItem(LS) || '{}')); } catch (e) { return blank(); } })();
+if (!st.startSet && st.start === '2026-10-26'){ st.start = DEFAULT_START; try { localStorage.setItem(LS, JSON.stringify(st)); } catch (e) {} }
 let saveTimer = null;
 function save(){ clearTimeout(saveTimer); saveTimer = setTimeout(() => { try { localStorage.setItem(LS, JSON.stringify(st)); } catch (e) { toast('Не удалось сохранить: память браузера заполнена'); } }, 120); }
 function saveNow(){ clearTimeout(saveTimer); try { localStorage.setItem(LS, JSON.stringify(st)); } catch (e) {} }
@@ -26,7 +27,10 @@ const WDF = ['Понедельник','Вторник','Среда','Четве�
 const fmtD = d => d.getDate() + ' ' + MONTHS[d.getMonth()];
 const OP_DATE = new Date(2025, 11, 9);
 const startD = () => pd(st.start || DEFAULT_START);
-const weekOf = d => { const n = ddiff(startD(), d); return n < 0 ? -1 : Math.floor(n / 7); };
+/* Неделя плана — с понедельника по воскресенье; стартовать можно в любой день, неделя 0 тогда короче. */
+const startMon = () => { const s0 = startD(); return addD(s0, -wdIdx(s0)); };
+const weekOf = d => { if (d < startD()) return -1; return Math.floor(ddiff(startMon(), d) / 7); };
+const weekStart = w => addD(startMon(), w * 7);
 const clampW = w => Math.max(0, Math.min(12, w));
 const drillWeek = w => (!st.surgeonOk && w >= 4) ? 3 : w;
 const plural = (n, a, b, c) => { const m = n % 10, h = n % 100; return (m === 1 && h !== 11) ? a : (m >= 2 && m <= 4 && (h < 10 || h >= 20)) ? b : c; };
@@ -170,19 +174,36 @@ function vidThumb(id){
 const canEmbed = () => /^https?:$/.test(location.protocol);
 
 /* ================= Сегодня ================= */
+/* Тренировка этого типа, уже записанная на этой неделе плана */
+function findWeekSess(w, t){
+ const a = weekStart(w), b = addD(a, 6);
+ const hit = sessList().filter(s => s.day === t && hasWork(s) && pd(s.date) >= a && pd(s.date) <= b);
+ return hit.length ? hit[hit.length - 1].k : null;
+}
+/* Что делать сегодня: сначала пропущенное по порядку, потом запланированное на сегодня, потом следующее */
 function chooseDay(date){
  const w = clampW(Math.max(0, weekOf(date)));
- const wd = wdIdx(date);
- for (const t of DAY_ORDER) if (DAYS[t].wd === wd) return t;
- const ws = addD(startD(), w * 7);
- for (const t of DAY_ORDER){ const d = addD(ws, DAYS[t].wd); if (d >= date && !hasWork(st.log[skey(iso(d), t)])) return t; }
- return 'A';
+ const wd = wdIdx(date), di = iso(date);
+ for (const t of DAY_ORDER){ const k = findWeekSess(w, t); if (k && k.startsWith(di)) return t; }
+ const open = DAY_ORDER.filter(t => !findWeekSess(w, t));
+ const missed = open.find(t => DAYS[t].wd < wd && !DAYS[t].optional);
+ if (missed) return missed;
+ const today = open.find(t => DAYS[t].wd === wd);
+ if (today) return today;
+ return open.find(t => DAYS[t].wd > wd) || DAY_ORDER.find(t => DAYS[t].wd === wd) || 'A';
+}
+/* Нагрузка на ноги вчера: вторник, четверг (блок ног) и поле */
+function legsYesterday(date, type){
+ if (!['L','A','F'].includes(type)) return null;
+ const y = iso(addD(date, -1));
+ const hit = sessList().find(s => s.date === y && ['L','A','F'].includes(s.day) && hasWork(s));
+ return hit ? hit.day : null;
 }
 function renderToday(){
  const d = todayD(), di = iso(d);
  const rawW = weekOf(d), pre = rawW < 0, w = clampW(Math.max(0, rawW));
  const type = ui.day || chooseDay(d);
- const key = skey(di, type);
+ const key = (!pre && findWeekSess(w, type)) || skey(di, type);
  const planned = DAY_ORDER.find(t => DAYS[t].wd === wdIdx(d));
  const sess = buildSession(w, type, drillWeek(w));
  if (pre){ sess.blocks = sess.blocks.filter(b => !/^Тесты/.test(b.t)); sess.note = ''; }
@@ -207,14 +228,16 @@ function renderToday(){
  }
  h += '</section>';
  // выбор тренировки
- const ws = pre ? null : addD(startD(), w * 7);
  h += '<nav class="daypick" aria-label="Тренировка">' + DAY_ORDER.map(t => {
-  const dd = ws ? addD(ws, DAYS[t].wd) : null;
-  const k2 = dd ? skey(iso(dd), t) : null;
-  const stt = sessStatus(w, t, k2 && hasWork(st.log[k2]) ? k2 : skey(di, t));
-  return '<button data-day="' + t + '" aria-pressed="' + (t === type) + '"><span>' + DAYS[t].short + '</span><small>' + WD[DAYS[t].wd] + (stt === 'done' ? ' · готово' : stt === 'started' ? ' · начато' : '') + '</small></button>';
+  const k2 = pre ? null : findWeekSess(w, t);
+  const stt = sessStatus(w, t, k2 || skey(di, t));
+  const when = k2 ? WD[wdIdx(pd(k2.split('|')[0]))] : WD[DAYS[t].wd];
+  return '<button data-day="' + t + '" aria-pressed="' + (t === type) + '"><span>' + DAYS[t].short + '</span><small>' + when + (stt === 'done' ? ' · готово' : stt === 'started' ? ' · начато' : '') + '</small></button>';
  }).join('') + '</nav>';
- if (!planned && !ui.day && !pre) h += '<p class="hint">Сегодня по плану отдых или лёгкий велосипед. Если тренируешься — ниже ближайшая тренировка недели.</p>';
+ const ownDay = DAYS[type].wd === wdIdx(d);
+ if (!pre && !ownDay && !findWeekSess(w, type)) h += '<p class="hint">' + (DAYS[type].wd < wdIdx(d) ? 'Эта тренировка по плану была в ' + WD[DAYS[type].wd] + ' — сделай её сегодня, порядок важнее дня недели.' : 'Сегодня по плану отдых. Если тренируешься — вот ближайшая тренировка недели.') + '</p>';
+ const ly = pre ? null : legsYesterday(d, type);
+ if (ly && !findWeekSess(w, type)) h += '<div class="gatebox">' + ICON.info + '<div><b>Вчера уже была нагрузка на ноги.</b> Между тренировками ног лучше 48 часов. ' + (type === 'A' ? 'Сегодня сделай верх полностью, а блок ног — только если колено спокойное, на подход меньше.' : 'Лучше перенеси на завтра или сделай верх.') + '</div></div>';
  h += '<div class="sesshead"><h2>' + DAYS[type].name + '</h2><span class="muted">' + DAYS[type].dur + (DAYS[type].optional ? ' · по возможности' : '') + '</span></div>';
  if (!st.surgeonOk && w >= 1 && (drillWeek(w) !== w || sess.blocks.some(b => b.items.some(it => it.type === 'c' && EX[it.ex] && EX[it.ex].gate)))) {
   h += '<div class="gatebox">' + ICON.lock + '<div><b>Часть упражнений закрыта до осмотра хирурга.</b> Сначала хирург должен проверить стабильность колена руками. Сила и бег по прямой — можно.' + (drillWeek(w) !== w ? ' Прыжки и бег пока как на неделе 3, сила ног — по плану.' : '') + '<br><button class="link inl" data-act="surg">Хирург разрешил</button></div></div>';
@@ -425,14 +448,15 @@ function renderPlan(){
  h += '<nav class="weeks" aria-label="Недели">' + Array.from({length: 14}, (_, i) => '<button data-week="' + i + '" aria-pressed="' + (i === w) + '" class="wk ' + (i === 13 ? 'p4' : PHASES[phaseOf(i)].color) + (i === cw ? ' cur' : '') + '">' + (i === 13 ? 'Матч' : i === 0 ? 'Старт' : i) + (TEST_WEEKS.includes(i) ? '<small>тест</small>' : i === cw ? '<small>сейчас</small>' : '<small>&nbsp;</small>') + '</button>').join('') + '</nav><p class="legend">Цвет — фаза. «Тест» — неделя проверки: по её итогам решаем, идти ли дальше.</p>';
  if (w === 13){ h += matchHTML(); app.innerHTML = h; return; }
  const p = PHASES[phaseOf(w)];
- const ws = addD(startD(), w * 7);
+ const ws = weekStart(w);
  h += '<section class="phase ' + p.color + '"><p class="ptag">' + esc(p.name) + ' · неделя ' + w + ' · ' + fmtD(ws) + ' — ' + fmtD(addD(ws, 6)) + '</p><h2>' + esc(p.title) + '</h2><p>' + esc(p.goal) + '</p><p class="gate"><b>Дальше, когда:</b> ' + esc(p.exit) + '</p></section>';
  if (drillWeek(w) !== w) h += '<div class="gatebox">' + ICON.lock + '<div>Пока хирург не проверил колено, прыжки и бег здесь — как на неделе 3. Сила ног идёт по фазе.</div></div>';
  if (w === 0 || w === 1) h += '<p class="hint">Неделя: вт — ноги и колено, чт — верх A и короткий блок ног, сб — верх B и беговая дорожка, вс — поле. Пн, ср, пт — отдых или лёгкий велосипед.</p>';
  DAY_ORDER.forEach(t => {
   const sess = buildSession(w, t, drillWeek(w));
   const dd = addD(ws, DAYS[t].wd);
-  h += '<details class="pday"' + (w === cw && wdIdx(todayD()) === DAYS[t].wd ? ' open' : '') + '><summary><span class="pwd">' + WD[DAYS[t].wd] + '<small>' + dd.getDate() + '</small></span><span class="pname">' + DAYS[t].name + '<small>' + DAYS[t].dur + (DAYS[t].optional ? ' · по возможности' : '') + '</small></span>' + ICON.chev + '</summary><div class="pbody">';
+  const before = dd < startD();
+  h += '<details class="pday' + (before ? ' past' : '') + '"' + (w === cw && wdIdx(todayD()) === DAYS[t].wd ? ' open' : '') + '><summary><span class="pwd">' + WD[DAYS[t].wd] + '<small>' + dd.getDate() + '</small></span><span class="pname">' + DAYS[t].name + '<small>' + (before ? 'до старта — делай в ближайший день · ' : '') + DAYS[t].dur + (DAYS[t].optional ? ' · по возможности' : '') + '</small></span>' + ICON.chev + '</summary><div class="pbody">';
   sess.blocks.forEach(b => {
    h += '<h3 class="ph">' + esc(b.t) + '</h3><ul>' + b.items.map(it => {
     const def = EX[it.ex] || {n: it.ex};
@@ -647,7 +671,8 @@ function renderMore(){
  h += '<section class="blk"><h2 class="bt">Упражнения</h2><input class="search" type="search" placeholder="Найти упражнение" data-act="search" value="' + esc(ui.q || '') + '" aria-label="Поиск упражнения"><div id="libList">' + libList() + '</div></section>';
  h += '<section class="blk"><h2 class="bt">Как пользоваться</h2>' + RULES.map(([t, b], i) => '<details class="rule"><summary>' + esc(t) + ICON.chev + '</summary><div>' + b + (t === 'Вопросы хирургу' && st.notes ? '<p class="tip"><b>Твои заметки:</b> ' + esc(st.notes) + '</p>' : '') + '</div></details>').join('') + '</section>';
  h += '<section class="blk"><h2 class="bt">Настройки</h2><div class="card settings">' +
-  '<label class="srow"><span>Понедельник недели 0<small>Сдвинь, если нужен блок силы или повтор недели</small></span><input type="date" data-act="set-start" value="' + esc(st.start) + '"></label>' +
+  '<label class="srow"><span>День старта<small>Любой день. Неделя плана — с понедельника по воскресенье</small></span><input type="date" data-act="set-start" value="' + esc(st.start) + '"></label>' +
+  '<div class="srow col"><span>Сдвинуть план<small>Если болел, уезжал или тесты не пройдены — повтори неделю</small></span><div class="actions wrap"><button class="btn sec sm" data-act="shift" data-d="7">Повторить неделю</button><button class="btn sec sm" data-act="shift" data-d="-7">На неделю назад</button></div></div>' +
   '<label class="srow"><span>Вес тела, кг<small>Для подтягиваний, брусьев и тестов</small></span><input inputmode="decimal" data-act="set-bw" value="' + esc(fw(Number(st.bw) || 80)) + '"></label>' +
   '<div class="srow"><span>Хирург проверил колено и разрешил прыжки и повороты<small>Откроет закрытые упражнения</small></span><button class="switch" aria-label="Хирург разрешил" data-act="surg-toggle" role="switch" aria-checked="' + !!st.surgeonOk + '"><i></i></button></div>' +
   '</div></section>';
@@ -665,7 +690,7 @@ function libList(){
  return h || '<p class="empty">Ничего не нашлось.</p>';
 }
 const RULES = [
- ['Как устроена неделя', '<p>3 раза в зал и, если получится, 4-й раз на поле.</p><ul class="plain"><li><b>Вторник — ноги и колено.</b> Прыжки, бег и повороты, сила ног на одну ногу.</li><li><b>Четверг — верх A и короткий блок ног.</b> Грудь, ширина спины, плечи.</li><li><b>Суббота — верх B и беговая дорожка.</b> Плечи, толщина спины, руки.</li><li><b>Воскресенье — поле.</b> Бег, мяч, позже повороты и реакция.</li></ul><p>Грудь, спина и плечи работают дважды в неделю — так растёт торс. Ноги — дважды, иначе колено не догнать. Махи в стороны стоят в обоих днях верха: широкие плечи дают V-силуэт.</p><p>Пропустил день — сделай его на следующий, порядок важнее календаря.</p>'],
+ ['Как устроена неделя', '<p>3 раза в зал и, если получится, 4-й раз на поле.</p><ul class="plain"><li><b>Вторник — ноги и колено.</b> Прыжки, бег и повороты, сила ног на одну ногу.</li><li><b>Четверг — верх A и короткий блок ног.</b> Грудь, ширина спины, плечи.</li><li><b>Суббота — верх B и беговая дорожка.</b> Плечи, толщина спины, руки.</li><li><b>Воскресенье — поле.</b> Бег, мяч, позже повороты и реакция.</li></ul><p>Грудь, спина и плечи работают дважды в неделю — так растёт торс. Ноги — дважды, иначе колено не догнать. Махи в стороны стоят в обоих днях верха: широкие плечи дают V-силуэт.</p><p>Пропустил день — сделай его на следующий: порядок важнее календаря. Приложение само предложит пропущенную тренировку. Между тренировками с нагрузкой на ноги (вторник, четверг, поле) — не меньше 48 часов.</p><p>Начать можно с любого дня: неделя плана идёт с понедельника по воскресенье, поэтому первая неделя тогда просто короче.</p>'],
  ['Как работают подсказки по весу', '<p>Для каждого упражнения есть диапазон повторов, например 6–8.</p><ul class="plain"><li>Все подходы дошли до верхней границы — в следующий раз вес прибавится.</li><li>Подходы ровные, но ниже верха — тот же вес, цель +1 повтор.</li><li>Подходы проседали (10, 7, 4) — тот же вес, цель — ровные подходы. В первом подходе оставляй 1–2 повтора в запасе.</li><li>Совсем не дотянул — вес снизится на шаг.</li></ul><p>Если утром колено не в норме, вес в ногах не прибавляется.</p>'],
  ['Утренняя проверка колена', '<p>Каждое утро после нагрузки — 20 секунд: проверка отёка и оценка боли на вкладке «Сегодня».</p><ul class="plain"><li><b>Зелёный</b> — по плану.</li><li><b>Жёлтый</b> (едва больше обычного, набухло под коленом, боль 3–4) — облегчённый день, не прибавляй.</li><li><b>Красный</b> (отёк, боль 5+, подкашивание) — без прыжков и бега 3–5 дней. Повторяется — к хирургу.</li></ul>'],
  ['До осмотра хирурга', '<p>Прыжки на одной ноге, повороты, спринты и мяч в движении закрыты, пока хирург не проверит стабильность колена руками. Сила, бег по прямой, мягкие прыжки на двух ногах и передачи стоя — можно.</p><p>После осмотра включи переключатель в «Настройках» — закрытые упражнения откроются.</p>'],
@@ -798,6 +823,7 @@ document.addEventListener('click', e => {
   case 'bw-add': { const v = parseFloat(String($('#bwIn').value).replace(',', '.')); if (!(v > 30 && v < 250)){ toast('Введи вес в килограммах'); return; } const di = iso(todayD()); st.bodyw = (st.bodyw || []).filter(x => x.date !== di); st.bodyw.push({date: di, kg: v}); st.bw = v; save(); renderProgress(); break; }
   case 'match': st.match = st.match || {}; st.match[a.dataset.m] = !st.match[a.dataset.m]; save(); renderPlan(); break;
   case 'export': exportData(); break;
+  case 'shift': { const n = +a.dataset.d; st.start = iso(addD(startD(), n)); st.startSet = true; save(); ui.planWeek = null; ui.day = null; toast(n > 0 ? 'План сдвинут на неделю вперёд: текущая неделя повторится' : 'План сдвинут на неделю назад'); render(); break; }
  }
 });
 function readDraft(dk){
@@ -823,7 +849,7 @@ document.addEventListener('change', e => {
  if (t.dataset.m === 'pain'){ render(); return; }
  if (t.dataset.m){ const di = iso(todayD()); st.morning[di] = st.morning[di] || {}; st.morning[di][t.dataset.m] = t.checked; save(); render(); return; }
  if (t.dataset.act === 'tin'){ renderProgress(); toast('Сохранено'); return; }
- if (t.dataset.act === 'set-start'){ if (t.value){ st.start = t.value; save(); ui.planWeek = null; toast('Дата старта: ' + fmtD(pd(t.value))); } return; }
+ if (t.dataset.act === 'set-start'){ if (t.value){ st.start = t.value; st.startSet = true; save(); ui.planWeek = null; ui.day = null; toast('Старт: ' + fmtD(pd(t.value))); } return; }
  if (t.dataset.act === 'set-bw'){ const v = parseFloat(String(t.value).replace(',', '.')); if (v > 30 && v < 250){ st.bw = v; save(); toast('Вес тела сохранён'); } return; }
  if (t.dataset.act === 'import'){ importFile(t.files[0]); t.value = ''; return; }
 });
