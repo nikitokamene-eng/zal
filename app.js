@@ -269,7 +269,7 @@ function sessionHTML(sess, key, w, type){
   h += '<section class="blk"><h3>' + esc(b.t) + '</h3><ul class="items">';
   b.items.forEach((it, ii) => {
    if (it.type === 'g'){ allG.push(it); h += gymItem(it, key, gi++, w); }
-   else h += checkItem(it, key, bi + '-' + ii);
+   else h += checkItem(it, key, bi + '-' + ii, b.t, w);
   });
   h += '</ul></section>';
  });
@@ -277,9 +277,11 @@ function sessionHTML(sess, key, w, type){
  const done = s ? Object.values(s.ex || {}).reduce((a, e) => a + (e.sets ? e.sets.filter(x => !x.d).length : 0), 0) : 0;
  const planned = allG.reduce((a, g) => a + g.sets, 0);
  const prs = s ? countPR(key) : 0;
- if (planned && done >= planned) h += finishHTML(key);
- if (planned){
-  h += '<section class="summary"><div class="sumrow"><span>Подходов</span><b>' + done + ' из ' + planned + '</b></div>' + (prs ? '<div class="sumrow gold">' + ICON.star + '<span>Рекордов</span><b>' + prs + '</b></div>' : '') + '<div class="meter"><i style="width:' + Math.min(100, done / planned * 100) + '%"></i></div>' + (s && done ? '<button class="btn sec" data-act="copy-sess" data-k="' + key + '">' + ICON.copy + ' Скопировать текстом</button>' : '') + '</section>';
+ const itemsAll = (h.match(/<li class="(gym|chk)/g) || []).length;
+ const itemsDone = (h.match(/<li class="gym[^"]*\bcomplete\b/g) || []).length + (h.match(/<li class="chk[^"]*\bon\b/g) || []).length;
+ if ((planned && done >= planned) || (itemsAll && itemsDone >= itemsAll)) h += finishHTML(key);
+ if (itemsAll){
+  h += '<section class="summary"><div class="sumrow"><span>Сделано упражнений</span><b>' + itemsDone + ' из ' + itemsAll + '</b></div>' + (planned ? '<div class="sumrow sub"><span>Подходов с весом</span><b>' + done + ' из ' + planned + '</b></div>' : '') + (prs ? '<div class="sumrow gold">' + ICON.star + '<span>Рекордов</span><b>' + prs + '</b></div>' : '') + '<div class="meter"><i style="width:' + Math.min(100, itemsDone / itemsAll * 100) + '%"></i></div>' + (s && hasWork(s) ? '<button class="btn sec" data-act="copy-sess" data-k="' + key + '">' + ICON.copy + ' Скопировать текстом</button>' : '') + '</section>';
  }
  h += '<label class="notefield">Заметка к тренировке<textarea data-act="sess-note" data-k="' + key + '" rows="2" placeholder="Как прошло, что заменил">' + esc(s ? s.note : '') + '</textarea></label>';
  return h;
@@ -341,14 +343,71 @@ function gymItem(it, key, idx, w){
  return h;
 }
 const restTxt = s => s >= 60 ? (s % 60 ? Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0') : (s / 60) + ' мин') : s + ' с';
-function checkItem(it, key, idx){
+const REST_BY_CAT = {'Прыжки': 75, 'Колено и баланс': 45, 'Бег и смены направления': 90, 'Ноги': 90};
+function doseInfo(it, def){
+ const d = it.dose || '';
+ const pr = d.match(/^(\d+) прохода/);
+ const m = pr ? [d, pr[1], '', ''] : d.match(/^(\d+)(?:[–-]\d+)?\s*×\s*(\d+(?:[–-]\d+)?)?\s*(с\b|м\b|мин)?/);
+ if (!m || /×\s*\(/.test(d)) return null;
+ const sets = +m[1];
+ if (sets < 2) return null;
+ const own = d.match(/отдых\s*(\d+)\s*с/) || (it.note || '').match(/отдых\s*(\d+)\s*с/);
+ const rest = own ? +own[1] : (def.rest != null ? def.rest : (REST_BY_CAT[def.c] != null ? REST_BY_CAT[def.c] : 60));
+ const hold = m[3] === 'с' && m[2] && !/–/.test(m[2]) ? +m[2] : 0;
+ const uni = /на ногу|на сторону|каждой ногой|в каждую сторону|через каждую ногу|на каждую/.test(d + ' ' + (it.note || ''));
+ return {sets, rest, hold, uni};
+}
+function checkItem(it, key, idx, bt, w){
  const def = EX[it.ex] || {n: it.ex};
+ const proto = TEST_PROTO[it.ex];
+ if (proto && (def.c === 'Тесты' || /^Тест/.test(bt || '') || /тест/i.test(it.dose || ''))) return testItem(it, key, idx, proto, w);
+ const di = doseInfo(it, def);
+ if (di && !(def.gate === 'surgeon' && !st.surgeonOk)) return setItem(it, key, idx, di);
  const ck = it.ex + '#' + idx;
  const s = st.log[key];
  const on = !!(s && s.checks && s.checks[ck]);
  const locked = def.gate === 'surgeon' && !st.surgeonOk;
  const tm = it.timer || def.timer || '';
  return '<li class="chk' + (on ? ' on' : '') + (locked ? ' locked' : '') + '"><button class="cbox" data-act="check" data-k="' + key + '" data-c="' + ck + '"' + (locked ? ' disabled aria-label="Закрыто до осмотра хирурга"' : ' aria-pressed="' + on + '" aria-label="Отметить: ' + esc(def.n) + '"') + '>' + (locked ? ICON.lock : ICON.check) + '</button><button class="cmain" data-ex="' + it.ex + '"><span class="cname">' + esc(def.n) + '</span>' + (it.dose ? '<span class="dose">' + esc(it.dose) + '</span>' : '') + (it.note ? '<span class="cnote">' + esc(it.note) + '</span>' : '') + (locked ? '<span class="cnote">после осмотра хирурга</span>' : '') + (VID()[it.ex] && !locked ? '<span class="vmark">' + ICON.play + 'видео</span>' : '') + '</button>' + (tm && !locked ? '<button class="ibtn" data-act="timer" data-t="' + tm + '" aria-label="Таймер">' + ICON.timer + '</button>' : '') + '</li>';
+}
+function setItem(it, key, idx, di){
+ const def = EX[it.ex];
+ const ck = it.ex + '#' + idx;
+ const s = st.log[key];
+ const n = Math.min((s && s.cnt && s.cnt[ck]) || 0, di.sets);
+ const on = !!(s && s.checks && s.checks[ck]) || n >= di.sets;
+ const openK = key + '#c' + idx, open = ui.open === openK;
+ const tm = it.timer || def.timer || '';
+ let h = '<li class="chk set' + (on ? ' on' : '') + (open ? ' open' : '') + '"><div class="crow"><button class="cbox" data-act="check" data-k="' + key + '" data-c="' + ck + '" aria-pressed="' + on + '" aria-label="Отметить: ' + esc(def.n) + '">' + ICON.check + '</button><button class="cmain" data-act="open" data-o="' + openK + '" aria-expanded="' + open + '"><span class="cname">' + esc(def.n) + '</span><span class="dose">' + esc(it.dose) + '</span><span class="cnote">отдых ' + restTxt(di.rest) + (it.note ? ' · ' + esc(it.note) : '') + '</span></button><span class="gcount' + (on ? ' ok' : '') + '">' + (on ? ICON.check : '') + n + '/' + di.sets + '</span></div>';
+ if (open){
+  h += '<div class="cbody">';
+  if (di.uni) h += '<p class="muted small">Один подход — это обе ноги или стороны по очереди, без отдыха между ними.</p>';
+  h += '<div class="actions">' + (di.hold ? '<button class="btn sec" data-act="hold" data-s="' + di.hold + '">Засечь ' + di.hold + ' с</button>' : '') + (n < di.sets ? '<button class="btn primary" data-act="cset" data-k="' + key + '" data-c="' + ck + '" data-n="' + di.sets + '" data-rest="' + di.rest + '">Подход ' + (n + 1) + ' сделан</button>' : '<button class="btn sec" data-act="cundo" data-k="' + key + '" data-c="' + ck + '">Отменить последний</button>') + '</div>';
+  h += '<div class="gfoot"><button class="link" data-ex="' + it.ex + '">' + (VID()[it.ex] ? ICON.play + ' Техника и видео' : ICON.info + ' Как делать') + '</button>' + (tm ? '<button class="link" data-act="timer" data-t="' + tm + '">' + ICON.timer + ' Таймер</button>' : '') + (n > 0 && n < di.sets ? '<button class="link" data-act="cundo" data-k="' + key + '" data-c="' + ck + '">Отменить</button>' : '') + '</div></div>';
+ }
+ return h + '</li>';
+}
+function testItem(it, key, idx, proto, w){
+ const def = EX[it.ex];
+ const ck = it.ex + '#' + idx;
+ const s = st.log[key];
+ const locked = def.gate === 'surgeon' && !st.surgeonOk;
+ const cp = cpForWeek(w || 0);
+ const td = proto.td, d = TD[td];
+ const req = (CP[cp] && CP[cp].req[td]) || {info: 1};
+ const r = d ? evalT(cp, td, req) : {txt: ''};
+ const v = d ? getT(cp, td) : {};
+ const has = d && (d.type === 'sym' || d.type === 'time' || d.type === 'diff' ? (v.o && v.h) : v.v !== undefined && v.v !== '');
+ const on = !!(s && s.checks && s.checks[ck]) || !!has;
+ const openK = key + '#c' + idx, open = ui.open === openK;
+ let h = '<li class="chk test' + (on ? ' on' : '') + (locked ? ' locked' : '') + (open ? ' open' : '') + '"><div class="crow"><button class="cbox" data-act="check" data-k="' + key + '" data-c="' + ck + '"' + (locked ? ' disabled' : ' aria-pressed="' + on + '"') + ' aria-label="Отметить: ' + esc(def.n) + '">' + (locked ? ICON.lock : ICON.check) + '</button><button class="cmain" ' + (locked ? 'data-ex="' + it.ex + '"' : 'data-act="open" data-o="' + openK + '" aria-expanded="' + open + '"') + '><span class="cname">' + esc(def.n) + '</span>' + (it.dose ? '<span class="dose">' + esc(it.dose) + '</span>' : '') + '<span class="cnote">' + (locked ? 'после осмотра хирурга' : esc(proto.short)) + '</span>' + (r.txt && !open ? '<span class="cres">' + esc(r.txt) + '</span>' : '') + '</button></div>';
+ if (open && !locked){
+  h += '<div class="cbody"><ol class="steps small">' + proto.how.map(x => '<li>' + esc(x) + '</li>').join('') + '</ol>';
+  if (proto.rest) h += '<div class="actions"><button class="btn sec" data-act="trest" data-s="' + proto.rest + '">Отдых ' + restTxt(proto.rest) + '</button></div>';
+  if (d){ h += '<p class="mlab">Результат — сохранится в «Прогресс → Колено»</p>' + testInputs(cp, td) + (r.txt ? '<p class="tres ' + (r.ok === true ? 'ok' : r.ok === false ? 'bad' : '') + '">' + esc(r.txt) + '</p>' : ''); }
+  h += '<div class="gfoot"><button class="link" data-ex="' + it.ex + '">' + (VID()[it.ex] ? ICON.play + ' Техника и видео' : ICON.info + ' Подробно') + '</button></div></div>';
+ }
+ return h + '</li>';
 }
 function prIndexes(id, key){
  const out = new Set();
@@ -563,6 +622,14 @@ function evalT(cp, id, req){
  if (req.info && d.type !== 'sym') ok = null;
  return {txt, ok};
 }
+function testInputs(cp, id){
+ const d = TD[id], v = getT(cp, id), c = ' data-cp="' + cp + '"';
+ if (d.type === 'sel') return '<div class="seg small">' + SWELL.map(([o, l]) => '<button data-act="tset"' + c + ' data-id="' + id + '" data-f="v" data-v="' + o + '" aria-pressed="' + (v.v === o) + '">' + l + '</button>').join('') + '</div>';
+ if (d.type === 'bool') return '<div class="seg small"><button data-act="tset"' + c + ' data-id="' + id + '" data-f="v" data-v="1" aria-pressed="' + (v.v === true) + '">Да</button><button data-act="tset"' + c + ' data-id="' + id + '" data-f="v" data-v="0" aria-pressed="' + (v.v === false) + '">Нет</button></div>';
+ if (d.type === 'rsi') return '<div class="tin"><input inputmode="numeric" data-act="tin"' + c + ' data-id="rsi" data-f="v" value="' + esc(v.v) + '" placeholder="0–100" aria-label="Балл"><button class="btn sec sm" data-act="rsi"' + c + '>Пройти опросник</button></div>';
+ return '<div class="tin two"><label>Оперированная<input inputmode="decimal" data-act="tin"' + c + ' data-id="' + id + '" data-f="o" value="' + esc(v.o) + '"></label><label>Здоровая<input inputmode="decimal" data-act="tin"' + c + ' data-id="' + id + '" data-f="h" value="' + esc(v.h) + '"></label><span class="muted">' + (d.u || '') + '</span></div>';
+}
+const cpForWeek = w => [9, 6, 3, 0].find(c => w >= c) || 0;
 function kneeHTML(){
  if (ui.cp == null){ const w = weekOf(todayD()); ui.cp = w >= 9 ? 9 : w >= 6 ? 6 : w >= 3 ? 3 : 0; }
  const c = CP[ui.cp];
@@ -574,11 +641,7 @@ function kneeHTML(){
   const d = TD[id], v = getT(ui.cp, id), r = evalT(ui.cp, id, req);
   if (!req.info){ tot++; if (r.ok === true) pass++; }
   const gated = d.ex && EX[d.ex] && EX[d.ex].gate === 'surgeon' && !st.surgeonOk;
-  let inp = '';
-  if (d.type === 'sel') inp = '<div class="seg small">' + SWELL.map(([o, l]) => '<button data-act="tset" data-id="' + id + '" data-f="v" data-v="' + o + '" aria-pressed="' + (v.v === o) + '">' + l + '</button>').join('') + '</div>';
-  else if (d.type === 'bool') inp = '<div class="seg small"><button data-act="tset" data-id="' + id + '" data-f="v" data-v="1" aria-pressed="' + (v.v === true) + '">Да</button><button data-act="tset" data-id="' + id + '" data-f="v" data-v="0" aria-pressed="' + (v.v === false) + '">Нет</button></div>';
-  else if (d.type === 'rsi') inp = '<div class="tin"><input inputmode="numeric" data-act="tin" data-id="rsi" data-f="v" value="' + esc(v.v) + '" placeholder="0–100" aria-label="Балл"><button class="btn sec sm" data-act="rsi">Пройти опросник</button></div>';
-  else inp = '<div class="tin two"><label>Оперированная<input inputmode="decimal" data-act="tin" data-id="' + id + '" data-f="o" value="' + esc(v.o) + '"></label><label>Здоровая<input inputmode="decimal" data-act="tin" data-id="' + id + '" data-f="h" value="' + esc(v.h) + '"></label><span class="muted">' + (d.u || '') + '</span></div>';
+  const inp = testInputs(ui.cp, id);
   const mark = req.info ? '' : r.ok === true ? '<span class="tag ok">' + ICON.check + '</span>' : r.ok === false ? '<span class="tag bad">не пройдено</span>' : '';
   const li = '<li class="test' + (gated ? ' locked' : '') + '"><div class="thead">' + (d.ex ? '<button class="link" data-ex="' + d.ex + '">' + esc(d.n) + '</button>' : '<b>' + esc(d.n) + '</b>') + mark + '</div>' + (gated ? '<p class="muted small">' + ICON.lock + ' После осмотра хирурга</p>' : inp + (r.txt ? '<p class="tres ' + (r.ok === true ? 'ok' : r.ok === false ? 'bad' : '') + '">' + esc(r.txt) + '</p>' : '')) + '</li>';
   if (req.info){ infoH += li; infoN++; } else reqH += li;
@@ -787,7 +850,13 @@ document.addEventListener('click', e => {
    const s = st.log[a.dataset.k]; const arr = s.ex[a.dataset.id].sets; const i = +a.dataset.i; const removed = arr.splice(i, 1)[0];
    save(); closeSheet(); render();
    toast('Подход удалён', {label: 'Вернуть', fn: () => { arr.splice(i, 0, removed); save(); render(); }}); break; }
-  case 'check': { const s = getSess(a.dataset.k, true); s.checks[a.dataset.c] = !s.checks[a.dataset.c]; save(); const li = a.closest('li'); li.classList.toggle('on', !!s.checks[a.dataset.c]); a.setAttribute('aria-pressed', !!s.checks[a.dataset.c]); break; }
+  case 'cset': { unlockAudio(); const s = getSess(a.dataset.k, true); s.cnt = s.cnt || {}; const c = a.dataset.c, n = +a.dataset.n; s.cnt[c] = Math.min(n, (s.cnt[c] || 0) + 1); if (s.cnt[c] >= n) s.checks[c] = true; save();
+   if (s.cnt[c] < n) startRest(+a.dataset.rest, 'Дальше: ' + (s.cnt[c] + 1) + '-й из ' + n); else { stopRest(); ui.open = null; toast('Упражнение сделано'); }
+   render(); break; }
+  case 'cundo': { const s = getSess(a.dataset.k, true); s.cnt = s.cnt || {}; const c = a.dataset.c; s.cnt[c] = Math.max(0, (s.cnt[c] || 0) - 1); s.checks[c] = false; stopRest(); save(); render(); break; }
+  case 'hold': unlockAudio(); startRest(+a.dataset.s, 'Держи — по сигналу подход окончен'); break;
+  case 'trest': unlockAudio(); startRest(+a.dataset.s, 'Отдых между попытками'); break;
+  case 'check': { const s = getSess(a.dataset.k, true); const c = a.dataset.c; const was = a.getAttribute('aria-pressed') === 'true'; s.checks[c] = !was; if (was && s.cnt && s.cnt[c]) s.cnt[c] = 0; save(); render(); break; }
   case 'timer': { const tm = a.dataset.t; if (tm === 'react') reactCfg(); else if (TIMERS[tm]) runIntervals(...TIMERS[tm]); break; }
   case 'react-cfg': reactCfg(); break;
   case 'rmode': a.parentElement.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b === a)); break;
@@ -814,9 +883,9 @@ document.addEventListener('click', e => {
   case 'pseg': ui.progSeg = a.dataset.v; renderProgress(); break;
   case 'exprog': openExProg(a.dataset.id); break;
   case 'cp': ui.cp = +a.dataset.v; renderProgress(); break;
-  case 'tset': { const v = a.dataset.v; setT(ui.cp, a.dataset.id, a.dataset.f, TD[a.dataset.id].type === 'bool' ? v === '1' : v); renderProgress(); break; }
-  case 'rsi': rsiSheet(); break;
-  case 'rsi-save': { if ((ui.rsiTouched || []).filter(Boolean).length < 12){ toast('Ответь на все 12 вопросов'); return; } const v = rsiVals(); st.rsi[ui.cp] = v; setT(ui.cp, 'rsi', 'v', (v.reduce((x, y) => x + y, 0) / 1.2).toFixed(0)); closeSheet(); renderProgress(); break; }
+  case 'tset': { const v = a.dataset.v; const cp = a.dataset.cp != null ? +a.dataset.cp : ui.cp; setT(cp, a.dataset.id, a.dataset.f, TD[a.dataset.id].type === 'bool' ? v === '1' : v); render(); break; }
+  case 'rsi': if (a.dataset.cp != null) ui.cp = +a.dataset.cp; rsiSheet(); break;
+  case 'rsi-save': { if ((ui.rsiTouched || []).filter(Boolean).length < 12){ toast('Ответь на все 12 вопросов'); return; } const v = rsiVals(); st.rsi[ui.cp] = v; setT(ui.cp, 'rsi', 'v', (v.reduce((x, y) => x + y, 0) / 1.2).toFixed(0)); closeSheet(); render(); break; }
   case 'bw-add': { const v = parseFloat(String($('#bwIn').value).replace(',', '.')); if (!(v > 30 && v < 250)){ toast('Введи вес в килограммах'); return; } const di = iso(todayD()); st.bodyw = (st.bodyw || []).filter(x => x.date !== di); st.bodyw.push({date: di, kg: v}); st.bw = v; save(); renderProgress(); break; }
   case 'match': st.match = st.match || {}; st.match[a.dataset.m] = !st.match[a.dataset.m]; save(); renderPlan(); break;
   case 'export': exportData(); break;
@@ -839,14 +908,14 @@ document.addEventListener('input', e => {
  if (t.dataset.act === 'draft'){ ui.draft[t.dataset.dk] = readDraft(t.dataset.dk); return; }
  if (t.dataset.act === 'search'){ ui.q = t.value; $('#libList').innerHTML = libList(); return; }
  if (t.dataset.act === 'sess-note'){ const s = getSess(t.dataset.k, true); s.note = t.value; save(); return; }
- if (t.dataset.act === 'tin'){ setT(ui.cp, t.dataset.id, t.dataset.f, t.value); return; }
+ if (t.dataset.act === 'tin'){ setT(t.dataset.cp != null ? +t.dataset.cp : ui.cp, t.dataset.id, t.dataset.f, t.value); return; }
 });
 document.addEventListener('toggle', e => { if (e.target.dataset && e.target.dataset.act === 'cpinfo') ui.cpInfoOpen = e.target.open; }, true);
 document.addEventListener('change', e => {
  const t = e.target;
  if (t.dataset.m === 'pain'){ render(); return; }
  if (t.dataset.m){ const di = iso(todayD()); st.morning[di] = st.morning[di] || {}; st.morning[di][t.dataset.m] = t.checked; save(); render(); return; }
- if (t.dataset.act === 'tin'){ renderProgress(); toast('Сохранено'); return; }
+ if (t.dataset.act === 'tin'){ render(); toast('Сохранено'); return; }
  if (t.dataset.act === 'set-start'){ if (t.value){ st.start = t.value; st.startSet = true; save(); ui.planWeek = null; ui.day = null; toast('Старт: ' + fmtD(pd(t.value))); } return; }
  if (t.dataset.act === 'set-bw'){ const v = parseFloat(String(t.value).replace(',', '.')); if (v > 30 && v < 250){ st.bw = v; save(); toast('Вес тела сохранён'); } return; }
  if (t.dataset.act === 'import'){ importFile(t.files[0]); t.value = ''; return; }
@@ -897,7 +966,7 @@ function importFile(f){
  document.addEventListener('touchend', () => { if (y0 == null) return; sh().style.transform = ''; if (dy > 90) closeSheet(); y0 = null; });
 })();
 /* ================= Старт ================= */
-const APP_VERSION = '22.10 · 6';
+const APP_VERSION = '22.10 · 7';
 if ('serviceWorker' in navigator && window.isSecureContext && location.protocol !== 'file:'){
  navigator.serviceWorker.register('sw.js', {updateViaCache: 'none'}).then(r => { r.update().catch(() => {}); }).catch(() => {});
  let reloaded = false;

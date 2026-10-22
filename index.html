@@ -145,6 +145,14 @@ svg{width:20px;height:20px;flex:none}
 .chk.on .cname{color:var(--mut)}
 .dose{font-size:14.5px;color:var(--acc-ink);font-weight:600}
 .cnote{font-size:13.5px;color:var(--mut)}
+.chk.set,.chk.test{flex-direction:column;align-items:stretch;padding:0}
+.crow{display:flex;align-items:center;gap:4px;padding:0 10px 0 4px;min-height:56px}
+.crow .gcount{flex:none}
+.cbody{padding:0 14px 12px 52px}
+.cres{font-size:13.5px;color:var(--acc-ink);font-weight:600}
+.steps.small{font-size:15px;margin:2px 0 6px;padding-left:20px}
+.cbody .tin input{width:100%}
+.cbody .tin.two{display:grid;grid-template-columns:1fr 1fr auto;gap:8px}
 .ibtn{width:44px;height:44px;display:grid;place-items:center;color:var(--acc-ink);border-radius:12px}
 .ibtn svg{width:22px;height:22px}
 
@@ -190,6 +198,7 @@ table.sets{width:100%;border-collapse:collapse;font-size:15.5px}
 .summary{background:var(--surf);border-radius:var(--r);border:1px solid var(--line);padding:14px;margin-top:18px}
 .sumrow{display:flex;align-items:center;gap:8px;justify-content:space-between;font-size:16px}
 .sumrow.gold{color:var(--gold-ink)}
+.sumrow.sub{font-size:14.5px;color:var(--mut);margin-top:4px}
 .finish{background:var(--acc-soft);border-radius:var(--r);padding:14px 16px;margin-top:18px}
 .finish .ftitle{font-size:20px;font-weight:700;margin:0 0 6px;color:var(--acc-ink)}.sumrow.gold span{flex:1;color:var(--ink)}
 .meter{height:6px;border-radius:9px;background:var(--surf2);overflow:hidden;margin:10px 0}
@@ -398,8 +407,8 @@ body.resting #toast{bottom:calc(var(--tab-h) + var(--safe-b) + 96px)}
 <div class="modal" id="modal" aria-hidden="true"><div class="sheet" id="sheet" role="dialog" aria-modal="true"></div></div>
 <div id="screen" role="dialog" aria-live="assertive"></div>
 <div id="toast" role="status"></div>
-<script src="data.js?v=6"></script>
-<script src="videos.js?v=6"></script>
-<script src="app.js?v=6"></script>
+<script src="data.js?v=7"></script>
+<script src="videos.js?v=7"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>
