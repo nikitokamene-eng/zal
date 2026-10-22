@@ -25,6 +25,7 @@ const MONTHS = ['янв','фев','мар','апр','мая','июн','июл','
 const WD = ['пн','вт','ср','чт','пт','сб','вс'];
 const WDF = ['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'];
 const fmtD = d => d.getDate() + ' ' + MONTHS[d.getMonth()];
+const range = (a, b) => a.getMonth() === b.getMonth() ? a.getDate() + '–' + fmtD(b) : fmtD(a) + ' — ' + fmtD(b);
 const OP_DATE = new Date(2025, 11, 9);
 const startD = () => pd(st.start || DEFAULT_START);
 /* Неделя плана — с понедельника по воскресенье; стартовать можно в любой день, неделя 0 тогда короче. */
@@ -186,13 +187,11 @@ function chooseDay(date){
  const wd = wdIdx(date), di = iso(date);
  for (const t of DAY_ORDER){ const k = findWeekSess(w, t); if (k && k.startsWith(di)) return t; }
  const open = DAY_ORDER.filter(t => !findWeekSess(w, t));
- const missed = open.find(t => DAYS[t].wd < wd && !DAYS[t].optional);
- if (missed) return missed;
- const today = open.find(t => DAYS[t].wd === wd);
- if (today) return today;
- return open.find(t => DAYS[t].wd > wd) || DAY_ORDER.find(t => DAYS[t].wd === wd) || 'A';
+ /* по порядку: 1 → 2 → 3, поле — в воскресенье или когда зал на неделе закрыт */
+ if (wd === 6 && open.includes('F')) return 'F';
+ return open.find(t => !DAYS[t].optional) || (open.includes('F') ? 'F' : 'L');
 }
-/* Нагрузка на ноги вчера: вторник, четверг (блок ног) и поле */
+/* Нагрузка на ноги вчера: тренировки 1, 2 (блок ног) и поле */
 function legsYesterday(date, type){
  if (!['L','A','F'].includes(type)) return null;
  const y = iso(addD(date, -1));
@@ -209,7 +208,7 @@ function renderToday(){
  if (pre){ sess.blocks = sess.blocks.filter(b => !/^Тесты/.test(b.t)); sess.note = ''; }
  const m = st.morning[di] || {};
  const L = morningLight(m);
- let h = '<header class="top"><div><h1>' + WDF[wdIdx(d)] + ', ' + fmtD(d) + '</h1><p class="sub">' + (pre ? 'План стартует ' + fmtD(startD()) + '. До этого — обычные тренировки.' : (w === 0 ? 'Стартовая неделя' : 'Неделя ' + w + ' из 12')) + '</p>' + (pre ? '' : '<p class="sub">' + phasePill(w) + '</p>') + '</div></header>';
+ let h = '<header class="top"><div><h1>' + WDF[wdIdx(d)] + ', ' + fmtD(d) + '</h1><p class="sub">' + (pre ? 'План стартует ' + fmtD(startD()) + '. До этого — обычные тренировки.' : (w === 0 ? 'Стартовая неделя' : 'Неделя ' + w + ' из 12') + ' · ' + range(weekStart(w), addD(weekStart(w), 6))) + '</p>' + (pre ? '' : '<p class="sub">' + phasePill(w) + '<span>сделано ' + ['L','A','B'].filter(t => findWeekSess(w, t)).length + ' из 3' + (findWeekSess(w, 'F') ? ' + поле' : '') + '</span></p>') + '</div></header>';
  // утренняя проверка
  const mDone = !!(m.ok || m.sw || m.flag || m.cyst || m.pain != null);
  h += '<section class="morning' + (L && !ui.morningEdit ? ' l-' + L : '') + '" aria-label="Утренняя проверка колена">';
@@ -231,11 +230,9 @@ function renderToday(){
  h += '<nav class="daypick" aria-label="Тренировка">' + DAY_ORDER.map(t => {
   const k2 = pre ? null : findWeekSess(w, t);
   const stt = sessStatus(w, t, k2 || skey(di, t));
-  const when = k2 ? WD[wdIdx(pd(k2.split('|')[0]))] : WD[DAYS[t].wd];
-  return '<button data-day="' + t + '" aria-pressed="' + (t === type) + '"><span>' + DAYS[t].short + '</span><small>' + when + (stt === 'done' ? ' · готово' : stt === 'started' ? ' · начато' : '') + '</small></button>';
+  return '<button data-day="' + t + '" aria-pressed="' + (t === type) + '" class="' + stt + '"><span>' + DAYS[t].n + '. ' + DAYS[t].short + '</span><small>' + (stt === 'done' ? ICON.check + 'готово' : stt === 'started' ? 'начато' : DAYS[t].optional ? 'по желанию' : '&nbsp;') + '</small></button>';
  }).join('') + '</nav>';
- const ownDay = DAYS[type].wd === wdIdx(d);
- if (!pre && !ownDay && !findWeekSess(w, type)) h += '<p class="hint">' + (DAYS[type].wd < wdIdx(d) ? 'Эта тренировка по плану была в ' + WD[DAYS[type].wd] + ' — сделай её сегодня, порядок важнее дня недели.' : 'Сегодня по плану отдых. Если тренируешься — вот ближайшая тренировка недели.') + '</p>';
+ if (!pre && !ui.day && ['L','A','B'].every(t => findWeekSess(w, t)) && !findWeekSess(w, 'F')) h += '<p class="hint">Три тренировки в зале на этой неделе сделаны. Поле — по желанию. Новая неделя начнётся в понедельник.</p>';
  const ly = pre ? null : legsYesterday(d, type);
  if (ly && !findWeekSess(w, type)) h += '<div class="gatebox">' + ICON.info + '<div><b>Вчера уже была нагрузка на ноги.</b> Между тренировками ног лучше 48 часов. ' + (type === 'A' ? 'Сегодня сделай верх полностью, а блок ног — только если колено спокойное, на подход меньше.' : 'Лучше перенеси на завтра или сделай верх.') + '</div></div>';
  h += '<div class="sesshead"><h2>' + DAYS[type].name + '</h2><span class="muted">' + DAYS[type].dur + (DAYS[type].optional ? ' · по возможности' : '') + '</span></div>';
@@ -451,12 +448,11 @@ function renderPlan(){
  const ws = weekStart(w);
  h += '<section class="phase ' + p.color + '"><p class="ptag">' + esc(p.name) + ' · неделя ' + w + ' · ' + fmtD(ws) + ' — ' + fmtD(addD(ws, 6)) + '</p><h2>' + esc(p.title) + '</h2><p>' + esc(p.goal) + '</p><p class="gate"><b>Дальше, когда:</b> ' + esc(p.exit) + '</p></section>';
  if (drillWeek(w) !== w) h += '<div class="gatebox">' + ICON.lock + '<div>Пока хирург не проверил колено, прыжки и бег здесь — как на неделе 3. Сила ног идёт по фазе.</div></div>';
- if (w === 0 || w === 1) h += '<p class="hint">Неделя: вт — ноги и колено, чт — верх A и короткий блок ног, сб — верх B и беговая дорожка, вс — поле. Пн, ср, пт — отдых или лёгкий велосипед.</p>';
+ if (w === 0 || w === 1) h += '<p class="hint">В неделе 4 тренировки, делай их по порядку: 1 — ноги и колено, 2 — верх A и короткий блок ног, 3 — верх B и беговая дорожка, 4 — поле, по желанию. Удобный ритм — через день. Новая неделя начинается в понедельник.</p>';
  DAY_ORDER.forEach(t => {
   const sess = buildSession(w, t, drillWeek(w));
-  const dd = addD(ws, DAYS[t].wd);
-  const before = dd < startD();
-  h += '<details class="pday' + (before ? ' past' : '') + '"' + (w === cw && wdIdx(todayD()) === DAYS[t].wd ? ' open' : '') + '><summary><span class="pwd">' + WD[DAYS[t].wd] + '<small>' + dd.getDate() + '</small></span><span class="pname">' + DAYS[t].name + '<small>' + (before ? 'до старта — делай в ближайший день · ' : '') + DAYS[t].dur + (DAYS[t].optional ? ' · по возможности' : '') + '</small></span>' + ICON.chev + '</summary><div class="pbody">';
+  const nextT = w === cw ? chooseDay(todayD()) : null;
+  h += '<details class="pday"' + (nextT === t ? ' open' : '') + '><summary><span class="pwd"><small>' + DAYS[t].n + '</small></span><span class="pname">' + DAYS[t].name + '<small>' + (w === cw && findWeekSess(w, t) ? 'сделано · ' : '') + DAYS[t].dur + (DAYS[t].optional ? ' · по возможности' : '') + '</small></span>' + ICON.chev + '</summary><div class="pbody">';
   sess.blocks.forEach(b => {
    h += '<h3 class="ph">' + esc(b.t) + '</h3><ul>' + b.items.map(it => {
     const def = EX[it.ex] || {n: it.ex};
@@ -690,7 +686,7 @@ function libList(){
  return h || '<p class="empty">Ничего не нашлось.</p>';
 }
 const RULES = [
- ['Как устроена неделя', '<p>3 раза в зал и, если получится, 4-й раз на поле.</p><ul class="plain"><li><b>Вторник — ноги и колено.</b> Прыжки, бег и повороты, сила ног на одну ногу.</li><li><b>Четверг — верх A и короткий блок ног.</b> Грудь, ширина спины, плечи.</li><li><b>Суббота — верх B и беговая дорожка.</b> Плечи, толщина спины, руки.</li><li><b>Воскресенье — поле.</b> Бег, мяч, позже повороты и реакция.</li></ul><p>Грудь, спина и плечи работают дважды в неделю — так растёт торс. Ноги — дважды, иначе колено не догнать. Махи в стороны стоят в обоих днях верха: широкие плечи дают V-силуэт.</p><p>Пропустил день — сделай его на следующий: порядок важнее календаря. Приложение само предложит пропущенную тренировку. Между тренировками с нагрузкой на ноги (вторник, четверг, поле) — не меньше 48 часов.</p><p>Начать можно с любого дня: неделя плана идёт с понедельника по воскресенье, поэтому первая неделя тогда просто короче.</p>'],
+ ['Как устроена неделя', '<p>В неделе 4 тренировки: 3 в зале и поле по желанию. Делай их по порядку, день недели не важен.</p><ul class="plain"><li><b>1. Ноги и колено.</b> Прыжки, бег и повороты, сила ног на одну ногу.</li><li><b>2. Верх A и короткий блок ног.</b> Грудь, ширина спины, плечи.</li><li><b>3. Верх B и беговая дорожка.</b> Плечи, толщина спины, руки.</li><li><b>4. Поле.</b> Бег, мяч, позже повороты и реакция.</li></ul><p>Грудь, спина и плечи работают дважды в неделю — так растёт торс. Ноги — тоже дважды, иначе колено не догнать.</p><p>Удобный ритм — через день. Между тренировками 1, 2 и полем — не меньше 48 часов, приложение напомнит. Неделя идёт с понедельника по воскресенье: в понедельник счётчик «сделано» обнуляется и открывается следующая неделя плана.</p>'],
  ['Как работают подсказки по весу', '<p>Для каждого упражнения есть диапазон повторов, например 6–8.</p><ul class="plain"><li>Все подходы дошли до верхней границы — в следующий раз вес прибавится.</li><li>Подходы ровные, но ниже верха — тот же вес, цель +1 повтор.</li><li>Подходы проседали (10, 7, 4) — тот же вес, цель — ровные подходы. В первом подходе оставляй 1–2 повтора в запасе.</li><li>Совсем не дотянул — вес снизится на шаг.</li></ul><p>Если утром колено не в норме, вес в ногах не прибавляется.</p>'],
  ['Утренняя проверка колена', '<p>Каждое утро после нагрузки — 20 секунд: проверка отёка и оценка боли на вкладке «Сегодня».</p><ul class="plain"><li><b>Зелёный</b> — по плану.</li><li><b>Жёлтый</b> (едва больше обычного, набухло под коленом, боль 3–4) — облегчённый день, не прибавляй.</li><li><b>Красный</b> (отёк, боль 5+, подкашивание) — без прыжков и бега 3–5 дней. Повторяется — к хирургу.</li></ul>'],
  ['До осмотра хирурга', '<p>Прыжки на одной ноге, повороты, спринты и мяч в движении закрыты, пока хирург не проверит стабильность колена руками. Сила, бег по прямой, мягкие прыжки на двух ногах и передачи стоя — можно.</p><p>После осмотра включи переключатель в «Настройках» — закрытые упражнения откроются.</p>'],

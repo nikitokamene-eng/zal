@@ -360,10 +360,6 @@ const VIDEOS={
 "a1zcZND3q2w",
 "Physiotherapy University College Copenhagen"
 ],
-"t_10rm": [
-"xh2SLghGzdE",
-"Lift-STL"
-],
 "sprint": [
 "1i2ZPpXtuOk",
 "The Run Experience"
@@ -419,5 +415,13 @@ const VIDEOS={
 "curl_db": [
 "OPqe0kCxmR8",
 "One Minute Tutorial"
+],
+"t_ext10": [
+"TxXH-0HPD2s",
+"Medbridge"
+],
+"t_curl10": [
+"PXNJ71rksvU",
+"National Academy of Sports Medicine (NASM)"
 ]
 };
