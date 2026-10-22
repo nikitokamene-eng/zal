@@ -1,6 +1,7 @@
 /* Кэш для работы без сети. Сначала берём свежую версию из сети (3 секунды на ответ), без сети — сохранённую. */
-const CACHE = 'zal-v5';
-const FILES = ['./', 'index.html', 'data.js', 'videos.js', 'app.js', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
+const CACHE = 'zal-v6';
+const V = '6';
+const FILES = ['./', 'index.html', 'data.js?v=' + V, 'videos.js?v=' + V, 'app.js?v=' + V, 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES.map(f => new Request(f, {cache: 'reload'})))).then(() => self.skipWaiting()));
 });

@@ -897,8 +897,8 @@ function importFile(f){
  document.addEventListener('touchend', () => { if (y0 == null) return; sh().style.transform = ''; if (dy > 90) closeSheet(); y0 = null; });
 })();
 /* ================= Старт ================= */
-const APP_VERSION = '22.10 · 5';
-if ('serviceWorker' in navigator && location.protocol === 'https:'){
+const APP_VERSION = '22.10 · 6';
+if ('serviceWorker' in navigator && window.isSecureContext && location.protocol !== 'file:'){
  navigator.serviceWorker.register('sw.js', {updateViaCache: 'none'}).then(r => { r.update().catch(() => {}); }).catch(() => {});
  let reloaded = false;
  navigator.serviceWorker.addEventListener('controllerchange', () => { if (reloaded) return; reloaded = true; location.reload(); });
