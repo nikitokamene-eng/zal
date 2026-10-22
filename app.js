@@ -673,6 +673,7 @@ function renderMore(){
   '<div class="srow"><span>Хирург проверил колено и разрешил прыжки и повороты<small>Откроет закрытые упражнения</small></span><button class="switch" aria-label="Хирург разрешил" data-act="surg-toggle" role="switch" aria-checked="' + !!st.surgeonOk + '"><i></i></button></div>' +
   '</div></section>';
  h += '<section class="blk"><h2 class="bt">Данные</h2><div class="card"><p class="muted small">Всё хранится только на этом телефоне. Раз в пару недель сохраняй копию — если почистить Safari, данные пропадут.</p><div class="actions wrap"><button class="btn sec" data-act="export">Сохранить копию</button><label class="btn sec">Загрузить из файла<input type="file" accept=".json,application/json" data-act="import" hidden></label></div><p class="muted small">Загрузка добавляет тренировки к уже записанным, ничего не стирая. Подходит и для копии, и для файла истории из старого приложения.</p></div></section>';
+ h += '<section class="blk"><h2 class="bt">Приложение</h2><div class="card"><p class="muted small">Версия ' + APP_VERSION + '. Обновления приходят сами, когда есть интернет. Если что-то выглядит по-старому — нажми кнопку, твои тренировки не пропадут.</p><button class="btn sec wide" data-act="update">Обновить приложение</button></div></section>';
  h += '<p class="foot">Не заменяет осмотр хирурга и спортивного физиотерапевта. Если их рекомендации расходятся с планом — приоритет за хирургом.</p>';
  app.innerHTML = h;
 }
@@ -819,6 +820,7 @@ document.addEventListener('click', e => {
   case 'bw-add': { const v = parseFloat(String($('#bwIn').value).replace(',', '.')); if (!(v > 30 && v < 250)){ toast('Введи вес в килограммах'); return; } const di = iso(todayD()); st.bodyw = (st.bodyw || []).filter(x => x.date !== di); st.bodyw.push({date: di, kg: v}); st.bw = v; save(); renderProgress(); break; }
   case 'match': st.match = st.match || {}; st.match[a.dataset.m] = !st.match[a.dataset.m]; save(); renderPlan(); break;
   case 'export': exportData(); break;
+  case 'update': forceUpdate(); break;
   case 'shift': { const n = +a.dataset.d; st.start = iso(addD(startD(), n)); st.startSet = true; save(); ui.planWeek = null; ui.day = null; toast(n > 0 ? 'План сдвинут на неделю вперёд: текущая неделя повторится' : 'План сдвинут на неделю назад'); render(); break; }
  }
 });
@@ -895,6 +897,21 @@ function importFile(f){
  document.addEventListener('touchend', () => { if (y0 == null) return; sh().style.transform = ''; if (dy > 90) closeSheet(); y0 = null; });
 })();
 /* ================= Старт ================= */
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+const APP_VERSION = '22.10 · 5';
+if ('serviceWorker' in navigator && location.protocol === 'https:'){
+ navigator.serviceWorker.register('sw.js', {updateViaCache: 'none'}).then(r => { r.update().catch(() => {}); }).catch(() => {});
+ let reloaded = false;
+ navigator.serviceWorker.addEventListener('controllerchange', () => { if (reloaded) return; reloaded = true; location.reload(); });
+}
+async function forceUpdate(){
+ toast('Обновляю…');
+ try {
+  const regs = navigator.serviceWorker ? await navigator.serviceWorker.getRegistrations() : [];
+  await Promise.all(regs.map(r => r.unregister()));
+  if (window.caches) { const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); }
+ } catch (e) {}
+ saveNow();
+ location.replace(location.pathname + '?u=' + Date.now());
+}
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible'){ if (rest.end && $('#rest').classList.contains('on')) tickRest(); if (ui.tab === 'today') render(); } });
 render();
